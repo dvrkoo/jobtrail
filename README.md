@@ -1,12 +1,22 @@
 # JobTrail
 
-JobTrail is a local-first CLI that reconstructs a job-search timeline from mailbox metadata.
+JobTrail is a local-first CLI that reconstructs your job-search timeline from your mailbox.
 
-MVP status: v0.1.0 is tagged. v0.2 is focused on making the CLI feel like a real product: interactive startup, onboarding, settings, multiple provider accounts, and per-account sync windows.
+Most job trackers require manual entry. JobTrail reads job-related email metadata, classifies application events, stores a local SQLite timeline, and helps you see what is pending, rejected, interviewing, offered, or ghosted.
 
-## Privacy
+Status: early MVP. Gmail works. Outlook is a stub for now. No web dashboard, no LLM classifier, and no full email body storage by default.
 
-JobTrail stores application records, email metadata, classifier reasons, confidence scores, and short snippets. It does not store full email bodies by default and never deletes email.
+## Privacy First
+
+JobTrail never deletes email and does not store full email bodies by default.
+
+Stored locally:
+
+- Application records
+- Email metadata
+- Short snippets
+- Classifier confidence and reasons
+- Provider account settings
 
 Local paths:
 
@@ -16,64 +26,84 @@ Local paths:
 
 Override paths with `JOBTRAIL_CONFIG_DIR` and `JOBTRAIL_DATA_DIR`.
 
+## What Works Now
+
+- Interactive `jobtrail` startup screen
+- Onboarding wizard
+- Settings menu
+- SQLite local database
+- Rule-based explainable classification
+- Gmail provider and OAuth flow
+- Multiple provider accounts
+- Per-account sync windows
+- Sample JSON sync for demos and tests
+- List, show, stats, CSV export, Markdown export
+- Gmail label dry-run/apply mode
+- Outlook provider configuration stub
+
 ## Install
 
 ```bash
 uv sync
 ```
 
-## Interactive Startup
+## Demo Flow
 
-Run:
+```bash
+uv sync
+uv run jobtrail
+uv run jobtrail sync --from-sample-json examples/sample_gmail_messages.json
+uv run jobtrail stats
+uv run jobtrail list --status rejected
+uv run jobtrail export --format markdown
+```
+
+## First Run
 
 ```bash
 uv run jobtrail
 ```
 
-If config or the database is missing, JobTrail starts onboarding. Otherwise it shows a Rich home screen with a greeting, motivational phrase, provider status, last sync status, quick stats, and suggested next actions.
+If config or the database is missing, JobTrail starts onboarding. Otherwise it opens a Rich command-center screen with provider status, last sync, quick stats, and contextual next actions.
 
-## Onboarding
+Run onboarding manually:
 
 ```bash
 uv run jobtrail onboard
 ```
 
-The wizard asks for display name, motivational greeting settings, ghosting threshold, and provider accounts. It is safe to rerun and does not delete data.
-
-## Providers
-
-Gmail works. Outlook exists as a configuration stub for v0.2; Microsoft Graph sync is planned.
-
-Each provider account has its own sync window. Examples:
-
-- Gmail personal: last 12 months
-- Gmail university: last 24 months
-- Outlook: last 6 months
-
-Supported windows:
-
-- Absolute: `YYYY-MM-DD` start and optional end date
-- Relative: last 30 days, 90 days, 6 months, 12 months, 24 months
-- All available
-
-Commands:
-
-```bash
-uv run jobtrail providers list
-uv run jobtrail providers add
-uv run jobtrail providers remove 1
-```
-
 ## Gmail Setup
 
-Create a Google OAuth desktop app, download `credentials.json` into the project directory, then run:
+Create a Google OAuth desktop app, download the OAuth client as `credentials.json` into the project directory, then run:
 
 ```bash
 uv run jobtrail providers add
 uv run jobtrail sync --provider gmail --dry-run
 ```
 
-OAuth starts on first sync if needed. Labels are never applied unless `label-emails --apply` is used.
+OAuth starts on first sync if needed. Labels are never applied unless you explicitly run:
+
+```bash
+uv run jobtrail label-emails --provider gmail --apply
+```
+
+## Provider Management
+
+```bash
+uv run jobtrail providers list
+uv run jobtrail providers add
+uv run jobtrail providers disable 1
+uv run jobtrail providers enable 1
+uv run jobtrail providers remove 1
+```
+
+Each provider account has its own sync window:
+
+- Absolute: `YYYY-MM-DD` start and optional end date
+- Relative: last 30 days, 90 days, 6 months, 12 months, 24 months
+- All available
+
+Outlook accounts can be configured, but sync is not implemented yet.
 
 ## Commands
 
@@ -87,23 +117,19 @@ jobtrail sync
 jobtrail sync --provider gmail
 jobtrail sync --account you@example.com
 jobtrail sync --from-sample-json examples/sample_gmail_messages.json
-jobtrail list --status rejected
+jobtrail list --status pending
 jobtrail show 1
 jobtrail stats
+jobtrail export --format csv
 jobtrail export --format markdown
 jobtrail label-emails --provider gmail --dry-run
-jobtrail label-emails --provider gmail --apply
 ```
 
-## Try It Without Gmail
+## Export
 
 ```bash
-uv run jobtrail init
-uv run jobtrail sync --from-sample-json examples/sample_gmail_messages.json
-uv run jobtrail list
-uv run jobtrail stats
 uv run jobtrail export --format csv
-uv run pytest
+uv run jobtrail export --format markdown
 ```
 
 ## Manual GitHub Remote
@@ -118,9 +144,9 @@ git push -u origin feat/v0.2-onboarding
 
 ## Roadmap
 
-- Better company and role extraction.
-- Phrase packs beyond English.
-- Microsoft Graph sync for Outlook.
-- Optional full-body storage with explicit opt-in.
-- Richer deduplication.
-- No web dashboard until the CLI earns it.
+- Better company and role extraction
+- Phrase packs beyond English
+- Microsoft Graph sync for Outlook
+- Optional full-body storage with explicit opt-in
+- Richer deduplication
+- No web dashboard until the CLI earns it
