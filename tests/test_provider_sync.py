@@ -37,5 +37,20 @@ def test_sync_uses_provider_specific_window(monkeypatch, tmp_path) -> None:
         db.add(account)
         db.commit()
         db.refresh(account)
-        assert len(sync_provider_account(db, account)) == 1
+        summary = sync_provider_account(db, account)
+        assert summary.events_detected == 1
+        assert summary.applications_created == 1
     assert seen and "after:" in seen[0]
+
+
+def test_outlook_stub_returns_error() -> None:
+    engine = create_engine("sqlite://")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as db:
+        account = ProviderAccount(provider="outlook", account_email="a@example.com")
+        db.add(account)
+        db.commit()
+        db.refresh(account)
+        summary = sync_provider_account(db, account)
+        assert summary.status == "error"
+        assert "Outlook" in summary.error
