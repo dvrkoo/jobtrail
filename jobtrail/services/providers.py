@@ -66,3 +66,38 @@ def disable_or_delete(db: Session, provider_account_id: int, delete: bool = Fals
         account.updated_at = now_utc()
     db.commit()
     return True
+
+
+def set_enabled(db: Session, provider_account_id: int, enabled: bool) -> bool:
+    account = db.get(ProviderAccount, provider_account_id)
+    if not account:
+        return False
+    account.enabled = enabled
+    account.updated_at = now_utc()
+    db.commit()
+    return True
+
+
+def set_labels_enabled(db: Session, provider_account_id: int, enabled: bool) -> bool:
+    account = db.get(ProviderAccount, provider_account_id)
+    if not account:
+        return False
+    account.labels_enabled = enabled
+    account.updated_at = now_utc()
+    db.commit()
+    return True
+
+
+def set_relative_window(db: Session, provider_account_id: int, choice: str) -> bool:
+    account = db.get(ProviderAccount, provider_account_id)
+    if not account:
+        return False
+    window_type, value, unit = parse_relative_window(choice)
+    account.sync_window_type = window_type
+    account.sync_start_date = None
+    account.sync_end_date = None
+    account.relative_sync_value = value
+    account.relative_sync_unit = unit
+    account.updated_at = now_utc()
+    db.commit()
+    return True
