@@ -27,6 +27,16 @@ def db_initialized(db_path: Path | None = None) -> bool:
 
 def upgrade_schema(db_engine) -> None:
     inspector = inspect(db_engine)
+    if "application" in inspector.get_table_names():
+        existing_apps = {column["name"] for column in inspector.get_columns("application")}
+        app_columns = {
+            "manually_verified": "BOOLEAN DEFAULT 0",
+            "archived": "BOOLEAN DEFAULT 0",
+        }
+        with db_engine.begin() as conn:
+            for name, ddl in app_columns.items():
+                if name not in existing_apps:
+                    conn.execute(text(f"ALTER TABLE application ADD COLUMN {name} {ddl}"))
     if "provideraccount" not in inspector.get_table_names():
         return
     existing = {column["name"] for column in inspector.get_columns("provideraccount")}

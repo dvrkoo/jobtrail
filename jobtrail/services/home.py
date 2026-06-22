@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlmodel import Session, select
 
 from jobtrail.models import ProviderAccount
+from jobtrail.services.followups import followup_candidates
 from jobtrail.services.stats import stats
 
 
@@ -11,6 +12,7 @@ def home_data(db: Session) -> dict[str, int | str | None]:
     enabled = [account for account in accounts if account.enabled]
     last = max((account.last_sync_at for account in accounts if account.last_sync_at), default=None)
     data = stats(db)
+    followups = followup_candidates(db)[:3]
     return {
         "providers_count": len(accounts),
         "enabled_providers_count": len(enabled),
@@ -22,6 +24,9 @@ def home_data(db: Session) -> dict[str, int | str | None]:
         "rejected": data["rejected"],
         "offers": data["offers"],
         "ghosted": data["ghosted"],
+        "archived": data["archived"],
+        "followups_due": data["followups_due"],
+        "top_followups": [f"{item.application.company} — {item.application.role} ({item.days_stale}d)" for item in followups],
     }
 
 
@@ -33,6 +38,8 @@ def suggested_actions(data: dict[str, int | str | None]) -> list[str]:
         actions.append("jobtrail sync")
     if data["pending"]:
         actions.append("jobtrail list --status pending")
+    if data.get("followups_due"):
+        actions.append("jobtrail followups")
     if data["ghosted"]:
         actions.append("jobtrail list --status ghosted")
     if data["total"] == 0:

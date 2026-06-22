@@ -57,6 +57,8 @@ class Application(SQLModel, table=True):
     last_update_date: datetime | None = None
     last_email_date: datetime | None = None
     confidence: float = 0.0
+    manually_verified: bool = False
+    archived: bool = False
     notes: str | None = None
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
