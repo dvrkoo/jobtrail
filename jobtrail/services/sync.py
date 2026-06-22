@@ -94,7 +94,7 @@ def sync_messages_summary(
             summary.skipped_duplicates += 1
             continue
         result = classify_email(msg.subject, msg.sender, msg.snippet)
-        company = company_from_sender(msg.sender)
+        company = company_from_sender(msg.sender, msg.subject, msg.snippet)
         role = role_from_text(msg.subject, msg.snippet)
         received_at = parse_dt(msg.received_at) or now_utc()
         app = find_application(db, company, role, msg.thread_id)
