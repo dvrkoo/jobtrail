@@ -15,7 +15,10 @@ from jobtrail.config import AppConfig, config_exists, init_config, load_config, 
 from jobtrail.db import db_initialized, init_db, session
 from jobtrail.models import Application, EmailEvent, ProviderAccount, Status
 from jobtrail.providers.gmail import GmailProvider, load_sample
-from jobtrail.services.export import export_csv, export_markdown
+from jobtrail.services.export import export_csv, export_dir, export_latex, export_markdown, export_xlsx, timestamped_name
+from jobtrail.services.applications import set_archived, update_application
+from jobtrail.services.backup import export_backup, import_backup
+from jobtrail.services.followups import FollowupCandidate, followup_candidates
 from jobtrail.services.labeling import thread_labels
 from jobtrail.services.home import home_data, suggested_actions
 from jobtrail.services.phrases import phrase
@@ -35,7 +38,11 @@ from jobtrail.utils.windows import date_window, parse_relative_window
 
 app = typer.Typer(invoke_without_command=True)
 providers_app = typer.Typer(help="Manage provider accounts")
+applications_app = typer.Typer(help="Edit tracked applications")
+backup_app = typer.Typer(help="Backup and restore local JobTrail data")
 app.add_typer(providers_app, name="providers")
+app.add_typer(applications_app, name="applications")
+app.add_typer(backup_app, name="backup")
 console = Console()
 
 
@@ -241,9 +248,39 @@ def show_home_tables(data: dict[str, int | str | None]) -> None:
         "rejected",
         "offers",
         "ghosted",
+        "archived",
+        "followups_due",
     ]:
         stats_table.add_row(key, str(data[key]))
     console.print(stats_table)
+    for item in data.get("top_followups", []):
+        console.print(f"Follow up: {item}")
+
+
+def print_followups(rows: list[FollowupCandidate], output_format: str) -> None:
+    if output_format == "markdown":
+        console.print("| ID | Company | Role | Status | Last Update | Days Stale | Suggested Action | Confidence |")
+        console.print("|---:|---|---|---|---|---:|---|---:|")
+        for row in rows:
+            app_row = row.application
+            last = app_row.last_update_date or app_row.last_email_date or app_row.application_date
+            console.print(f"| {app_row.id} | {app_row.company} | {app_row.role} | {app_row.status.value} | {last or ''} | {row.days_stale} | {row.suggested_action} | {app_row.confidence:.2f} |")
+        return
+    table = Table("ID", "Company", "Role", "Status", "Last Update", "Days Stale", "Suggested Action", "Confidence")
+    for row in rows:
+        app_row = row.application
+        last = app_row.last_update_date or app_row.last_email_date or app_row.application_date
+        table.add_row(
+            str(app_row.id),
+            app_row.company,
+            app_row.role,
+            app_row.status.value,
+            str(last or ""),
+            str(row.days_stale),
+            row.suggested_action,
+            f"{app_row.confidence:.2f}",
+        )
+    console.print(table)
 
 
 def print_sync_summary(summary: SyncSummary) -> None:
@@ -292,6 +329,25 @@ def sync(
             print_sync_summary(summary)
 
 
+@app.command()
+def followups(
+    all: Annotated[bool, typer.Option("--all")] = False,
+    status: Status | None = None,
+    days: int | None = None,
+    format: Annotated[str, typer.Option()] = "table",
+) -> None:
+    init_config()
+    init_db()
+    if format not in {"table", "markdown"}:
+        raise typer.BadParameter("format must be table or markdown")
+    with session() as db:
+        rows = followup_candidates(db, include_all=all, status=status, days=days)
+    if not rows:
+        console.print("No followups due. Nice. Run `jobtrail followups --all` to review active apps.")
+        return
+    print_followups(rows, format)
+
+
 @app.command("list")
 def list_apps(status: Status | None = None) -> None:
     with session() as db:
@@ -318,6 +374,69 @@ def show(application_id: int) -> None:
         console.print(f"  {event.reason} ({event.confidence})")
 
 
+@applications_app.command("edit")
+def application_edit(
+    application_id: int,
+    company: str | None = None,
+    role: str | None = None,
+    location: str | None = None,
+    source: str | None = None,
+    job_url: str | None = None,
+    status: Status | None = None,
+    application_date: str | None = None,
+    last_update_date: str | None = None,
+    notes: str | None = None,
+    confidence: float | None = None,
+) -> None:
+    init_db()
+    changes = {
+        "company": company,
+        "role": role,
+        "location": location,
+        "source": source,
+        "job_url": job_url,
+        "status": status.value if status else None,
+        "application_date": application_date,
+        "last_update_date": last_update_date,
+        "notes": notes,
+        "confidence": confidence,
+    }
+    with session() as db:
+        app_row = db.get(Application, application_id)
+        if not app_row:
+            console.print("Application not found")
+            return
+        if not any(value is not None for value in changes.values()):
+            console.print(f"Editing {app_row.company} — {app_row.role}")
+            changes = {
+                "company": Prompt.ask("Company", default=app_row.company),
+                "role": Prompt.ask("Role", default=app_row.role),
+                "location": Prompt.ask("Location", default=app_row.location or ""),
+                "source": Prompt.ask("Source", default=app_row.source or ""),
+                "job_url": Prompt.ask("Job URL", default=app_row.job_url or ""),
+                "status": Prompt.ask("Status", choices=[item.value for item in Status], default=app_row.status.value),
+                "notes": Prompt.ask("Notes", default=app_row.notes or ""),
+            }
+        updated = update_application(db, application_id, **changes)
+    console.print(f"Updated {updated.id}: {updated.company} — {updated.role}" if updated else "Application not found")
+
+
+@applications_app.command("archive")
+def application_archive(application_id: int) -> None:
+    init_db()
+    with session() as db:
+        ok = set_archived(db, application_id, True)
+    console.print("Archived" if ok else "Application not found")
+
+
+@applications_app.command("unarchive")
+def application_unarchive(application_id: int) -> None:
+    init_db()
+    with session() as db:
+        ok = set_archived(db, application_id, False)
+    console.print("Unarchived" if ok else "Application not found")
+
+
 @app.command()
 def stats() -> None:
     with session() as db:
@@ -327,7 +446,8 @@ def stats() -> None:
 
 
 @app.command()
-def export(format: str = "csv") -> None:
+def export(format: str = "csv", status: Status | None = None) -> None:
+    cfg = init_config()
     with session() as db:
         if not db.exec(select(Application)).first():
             console.print("No applications to export. Run `jobtrail sync` first.")
@@ -335,9 +455,23 @@ def export(format: str = "csv") -> None:
         if format == "csv":
             console.print(export_csv(db), end="")
         elif format == "markdown":
-            console.print(export_markdown(db), end="")
+            console.print(export_markdown(db, status=status), end="")
+        elif format == "latex":
+            console.print(export_latex(db, status=status), end="")
+        elif format == "xlsx":
+            path = export_dir(cfg.data_dir) / timestamped_name("xlsx")
+            export_xlsx(db, path)
+            console.print(f"Exported {path}")
+        elif format == "all":
+            out = export_dir(cfg.data_dir)
+            (out / timestamped_name("csv")).write_text(export_csv(db))
+            (out / timestamped_name("md")).write_text(export_markdown(db))
+            (out / timestamped_name("tex")).write_text(export_latex(db))
+            xlsx = out / timestamped_name("xlsx")
+            export_xlsx(db, xlsx)
+            console.print(f"Exported all formats to {out}")
         else:
-            raise typer.BadParameter("format must be csv or markdown")
+            raise typer.BadParameter("format must be csv, markdown, xlsx, latex, or all")
 
 
 @app.command("label-emails")
@@ -462,6 +596,25 @@ def provider_enable(provider_account_id: int) -> None:
     with session() as db:
         ok = set_enabled(db, provider_account_id, True)
     console.print("Enabled" if ok else "Provider account not found")
+
+
+@backup_app.command("export")
+def backup_export() -> None:
+    cfg = init_config()
+    init_db()
+    path = cfg.data_dir / "backups" / f"jobtrail-backup-{date.today().isoformat()}.json"
+    with session() as db:
+        export_backup(db, path)
+    console.print(f"Backup written: {path}")
+
+
+@backup_app.command("import")
+def backup_import(path: Path) -> None:
+    init_config()
+    init_db()
+    with session() as db:
+        counts = import_backup(db, path)
+    console.print(f"Imported: {counts}")
 
 
 if __name__ == "__main__":
