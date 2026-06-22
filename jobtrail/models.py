@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 
 from sqlmodel import Field, SQLModel
@@ -31,6 +31,18 @@ class EventType(str, Enum):
     followup = "followup"
     generic_job_email = "generic_job_email"
     unknown = "unknown"
+
+
+class SyncWindowType(str, Enum):
+    absolute = "absolute"
+    relative = "relative"
+    all = "all"
+
+
+class SyncWindowUnit(str, Enum):
+    days = "days"
+    months = "months"
+    years = "years"
 
 
 class Application(SQLModel, table=True):
@@ -71,5 +83,15 @@ class ProviderAccount(SQLModel, table=True):
     provider: str
     account_email: str
     auth_state_path: str | None = None
+    enabled: bool = True
+    labels_enabled: bool = False
+    sync_window_type: SyncWindowType = SyncWindowType.relative
+    sync_start_date: date | None = None
+    sync_end_date: date | None = None
+    relative_sync_value: int | None = 12
+    relative_sync_unit: SyncWindowUnit | None = SyncWindowUnit.months
+    last_sync_at: datetime | None = None
+    last_sync_status: str | None = None
+    last_sync_error: str | None = None
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)

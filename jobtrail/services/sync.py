@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, select
 
 from jobtrail.classifiers.rules import classify_email
-from jobtrail.config import settings
-from jobtrail.models import Application, EmailEvent, Status, now_utc
+from jobtrail.config import load_config
+from jobtrail.models import Application, EmailEvent, ProviderAccount, Status, now_utc
+from jobtrail.providers.gmail import GmailProvider
 from jobtrail.schemas import ProviderMessage
+from jobtrail.utils.windows import gmail_after_before
 from jobtrail.utils.text import company_from_sender, normalize_key, role_from_text
 
 
@@ -21,6 +24,21 @@ TERMINAL_RANK = {
     Status.offer: 6,
     Status.ghosted: 7,
 }
+
+
+@dataclass
+class SyncSummary:
+    provider: str
+    account_email: str | None = None
+    search_window: str = "sample"
+    messages_scanned: int = 0
+    events_detected: int = 0
+    applications_created: int = 0
+    applications_updated: int = 0
+    skipped_duplicates: int = 0
+    status: str = "ok"
+    error: str | None = None
+    lines: list[str] = field(default_factory=list)
 
 
 def parse_dt(value: str | None) -> datetime | None:
@@ -43,7 +61,7 @@ def find_application(db: Session, company: str, role: str, thread_id: str | None
 
 
 def apply_ghosting(db: Session, days: int | None = None) -> int:
-    cutoff = now_utc() - timedelta(days=days or settings().ghost_after_days)
+    cutoff = now_utc() - timedelta(days=days or load_config().ghosting_threshold_days)
     changed = 0
     apps = db.exec(select(Application).where(Application.status.in_([Status.applied, Status.pending]))).all()
     for app in apps:
@@ -57,10 +75,23 @@ def apply_ghosting(db: Session, days: int | None = None) -> int:
     return changed
 
 
-def sync_messages(db: Session, messages: list[ProviderMessage], provider: str, dry_run: bool = True) -> list[str]:
-    lines = []
+def sync_messages_summary(
+    db: Session,
+    messages: list[ProviderMessage],
+    provider: str,
+    dry_run: bool = True,
+    account_email: str | None = None,
+    search_window: str = "sample",
+) -> SyncSummary:
+    summary = SyncSummary(
+        provider=provider,
+        account_email=account_email,
+        search_window=search_window,
+        messages_scanned=len(messages),
+    )
     for msg in messages:
         if db.exec(select(EmailEvent).where(EmailEvent.message_id == msg.id)).first():
+            summary.skipped_duplicates += 1
             continue
         result = classify_email(msg.subject, msg.sender, msg.snippet)
         company = company_from_sender(msg.sender)
@@ -68,6 +99,7 @@ def sync_messages(db: Session, messages: list[ProviderMessage], provider: str, d
         received_at = parse_dt(msg.received_at) or now_utc()
         app = find_application(db, company, role, msg.thread_id)
         if not app:
+            summary.applications_created += 1
             app = Application(
                 company=company,
                 role=role,
@@ -81,6 +113,7 @@ def sync_messages(db: Session, messages: list[ProviderMessage], provider: str, d
             db.add(app)
             db.flush()
         else:
+            summary.applications_updated += 1
             if TERMINAL_RANK[result.status] >= TERMINAL_RANK[app.status]:
                 app.status = result.status
                 app.confidence = max(app.confidence, result.confidence)
@@ -104,10 +137,56 @@ def sync_messages(db: Session, messages: list[ProviderMessage], provider: str, d
             snippet=(msg.snippet or "")[:500],
         )
         db.add(event)
-        lines.append(f"{company} | {role} | {result.status.value} | {result.reason}")
+        summary.events_detected += 1
+        summary.lines.append(f"{company} | {role} | {result.status.value} | {result.reason}")
     apply_ghosting(db)
     if dry_run:
         db.rollback()
     else:
         db.commit()
-    return lines
+    return summary
+
+
+def sync_messages(db: Session, messages: list[ProviderMessage], provider: str, dry_run: bool = True) -> list[str]:
+    return sync_messages_summary(db, messages, provider=provider, dry_run=dry_run).lines
+
+
+def sync_provider_account(db: Session, account: ProviderAccount, dry_run: bool = False) -> SyncSummary:
+    started = now_utc()
+    window = gmail_after_before(account) or "all"
+    try:
+        if account.provider == "gmail":
+            messages = GmailProvider().search_messages(window)
+        elif account.provider == "outlook":
+            raise NotImplementedError("Outlook sync is configured but not implemented yet")
+        else:
+            raise ValueError(f"Unsupported provider: {account.provider}")
+        for msg in messages:
+            msg.account_email = msg.account_email or account.account_email
+        summary = sync_messages_summary(
+            db,
+            messages,
+            provider=account.provider,
+            dry_run=dry_run,
+            account_email=account.account_email,
+            search_window=window,
+        )
+        account.last_sync_at = started
+        account.last_sync_status = "dry-run" if dry_run else "ok"
+        account.last_sync_error = None
+        db.add(account)
+        db.commit()
+        return summary
+    except Exception as exc:
+        account.last_sync_at = started
+        account.last_sync_status = "error"
+        account.last_sync_error = str(exc)
+        db.add(account)
+        db.commit()
+        return SyncSummary(
+            provider=account.provider,
+            account_email=account.account_email,
+            search_window=window,
+            status="error",
+            error=str(exc),
+        )

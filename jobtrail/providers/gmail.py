@@ -48,18 +48,30 @@ class GmailProvider(MailProvider):
     def _credentials(self):
         cfg = settings()
         token_path = cfg.token_dir / "gmail_token.json"
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES) if token_path.exists() else None
+        try:
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES) if token_path.exists() else None
+        except Exception as exc:
+            raise RuntimeError("Gmail token could not be read. Delete the token file and rerun `jobtrail sync`.") from exc
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except Exception as exc:
+                raise RuntimeError("Gmail token refresh failed. Rerun `jobtrail sync` to re-authenticate.") from exc
         if not creds or not creds.valid:
+            if not self.credentials_path.exists():
+                raise FileNotFoundError(
+                    "Gmail credentials missing. Download OAuth desktop credentials as `credentials.json`, "
+                    "then rerun `jobtrail sync`."
+                )
             flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, SCOPES)
             creds = flow.run_local_server(port=0)
         cfg.token_dir.mkdir(parents=True, exist_ok=True)
         token_path.write_text(creds.to_json())
         return creds
 
-    def search_messages(self) -> list[ProviderMessage]:
-        messages = self.service.users().messages().list(userId="me", q=QUERY).execute().get("messages", [])
+    def search_messages(self, window_query: str | None = None) -> list[ProviderMessage]:
+        q = f"({QUERY}) {window_query or ''}".strip()
+        messages = self.service.users().messages().list(userId="me", q=q).execute().get("messages", [])
         return [self._message(item["id"]) for item in messages]
 
     def _message(self, message_id: str) -> ProviderMessage:
