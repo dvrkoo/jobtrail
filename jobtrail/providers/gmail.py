@@ -58,8 +58,9 @@ class GmailProvider(MailProvider):
         token_path.write_text(creds.to_json())
         return creds
 
-    def search_messages(self) -> list[ProviderMessage]:
-        messages = self.service.users().messages().list(userId="me", q=QUERY).execute().get("messages", [])
+    def search_messages(self, window_query: str | None = None) -> list[ProviderMessage]:
+        q = f"({QUERY}) {window_query or ''}".strip()
+        messages = self.service.users().messages().list(userId="me", q=q).execute().get("messages", [])
         return [self._message(item["id"]) for item in messages]
 
     def _message(self, message_id: str) -> ProviderMessage:

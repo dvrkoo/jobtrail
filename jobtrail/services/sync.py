@@ -5,9 +5,11 @@ from datetime import UTC, datetime, timedelta
 from sqlmodel import Session, select
 
 from jobtrail.classifiers.rules import classify_email
-from jobtrail.config import settings
-from jobtrail.models import Application, EmailEvent, Status, now_utc
+from jobtrail.config import load_config
+from jobtrail.models import Application, EmailEvent, ProviderAccount, Status, now_utc
+from jobtrail.providers.gmail import GmailProvider
 from jobtrail.schemas import ProviderMessage
+from jobtrail.utils.windows import gmail_after_before
 from jobtrail.utils.text import company_from_sender, normalize_key, role_from_text
 
 
@@ -43,7 +45,7 @@ def find_application(db: Session, company: str, role: str, thread_id: str | None
 
 
 def apply_ghosting(db: Session, days: int | None = None) -> int:
-    cutoff = now_utc() - timedelta(days=days or settings().ghost_after_days)
+    cutoff = now_utc() - timedelta(days=days or load_config().ghosting_threshold_days)
     changed = 0
     apps = db.exec(select(Application).where(Application.status.in_([Status.applied, Status.pending]))).all()
     for app in apps:
@@ -111,3 +113,31 @@ def sync_messages(db: Session, messages: list[ProviderMessage], provider: str, d
     else:
         db.commit()
     return lines
+
+
+def sync_provider_account(db: Session, account: ProviderAccount, dry_run: bool = False) -> list[str]:
+    started = now_utc()
+    try:
+        if account.provider == "gmail":
+            messages = GmailProvider().search_messages(gmail_after_before(account))
+        elif account.provider == "outlook":
+            raise NotImplementedError("Outlook sync is configured but not implemented yet")
+        else:
+            raise ValueError(f"Unsupported provider: {account.provider}")
+        for msg in messages:
+            msg.account_email = msg.account_email or account.account_email
+        lines = sync_messages(db, messages, provider=account.provider, dry_run=dry_run)
+        account.last_sync_at = started
+        account.last_sync_status = "dry-run" if dry_run else "ok"
+        account.last_sync_error = None
+        db.add(account)
+        if not dry_run:
+            db.commit()
+        return lines
+    except Exception as exc:
+        account.last_sync_at = started
+        account.last_sync_status = "error"
+        account.last_sync_error = str(exc)
+        db.add(account)
+        db.commit()
+        raise
