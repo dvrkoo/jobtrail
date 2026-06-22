@@ -40,6 +40,10 @@ Override paths with `JOBTRAIL_CONFIG_DIR` and `JOBTRAIL_DATA_DIR`.
 - List, show, stats, CSV export, Markdown export
 - Gmail label dry-run/apply mode
 - Outlook provider configuration stub
+- Followup review for stale active applications
+- Application edit/archive commands
+- CSV, Markdown, Excel, and LaTeX exports
+- Local JSON backup export/import
 
 ## Install
 
@@ -54,6 +58,7 @@ uv sync
 uv run jobtrail
 uv run jobtrail sync --from-sample-json examples/sample_gmail_messages.json
 uv run jobtrail stats
+uv run jobtrail followups
 uv run jobtrail list --status rejected
 uv run jobtrail export --format markdown
 ```
@@ -120,8 +125,18 @@ jobtrail sync --from-sample-json examples/sample_gmail_messages.json
 jobtrail list --status pending
 jobtrail show 1
 jobtrail stats
+jobtrail followups
+jobtrail followups --all
+jobtrail followups --format markdown
+jobtrail applications edit 1 --company Daon --role "Data Scientist Face Biometrics"
+jobtrail applications archive 1
 jobtrail export --format csv
 jobtrail export --format markdown
+jobtrail export --format xlsx
+jobtrail export --format latex
+jobtrail export --format all
+jobtrail backup export
+jobtrail backup import backup.json
 jobtrail label-emails --provider gmail --dry-run
 ```
 
@@ -130,7 +145,34 @@ jobtrail label-emails --provider gmail --dry-run
 ```bash
 uv run jobtrail export --format csv
 uv run jobtrail export --format markdown
+uv run jobtrail export --format xlsx
+uv run jobtrail export --format latex --status pending
+uv run jobtrail export --format all
 ```
+
+Excel exports include Applications, Stats, and Followups sheets. LaTeX exports use a compact `longtable` and escape special characters.
+
+## Daily Followups
+
+```bash
+uv run jobtrail followups
+```
+
+Default thresholds:
+
+- applied/pending: 14 days
+- assessment: 7 days
+- interview: 5 days
+
+Use `--all`, `--status`, `--days`, and `--format markdown` for morning reviews or notes.
+
+## v0.3 Roadmap
+
+- Make installation with `pipx`/`uvx` painless
+- Improve Gmail OAuth setup and credentials wizard
+- Expand `jobtrail followups`
+- Improve deterministic extraction before considering LLMs
+- Add demo recording and README visuals
 
 ## Manual GitHub Remote
 

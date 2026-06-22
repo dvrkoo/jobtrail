@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add `jobtrail followups` for stale active applications.
+- Add application edit, archive, and unarchive commands.
+- Add Excel, LaTeX, and all-format exports.
+- Improve deterministic company and role extraction.
+- Add local JSON backup export/import without secrets or tokens.
+- Add followup and archive counts to stats/home data.
+
 ## v0.2.0
 
 - Added interactive startup screen for `jobtrail`.
