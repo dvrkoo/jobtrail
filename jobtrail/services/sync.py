@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+from sqlmodel import Session, select
+
+from jobtrail.classifiers.rules import classify_email
+from jobtrail.config import settings
+from jobtrail.models import Application, EmailEvent, Status, now_utc
+from jobtrail.schemas import ProviderMessage
+from jobtrail.utils.text import company_from_sender, normalize_key, role_from_text
+
+
+TERMINAL_RANK = {
+    Status.unknown: 0,
+    Status.pending: 1,
+    Status.applied: 2,
+    Status.assessment: 3,
+    Status.interview: 4,
+    Status.rejected: 5,
+    Status.offer: 6,
+    Status.ghosted: 7,
+}
+
+
+def parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def find_application(db: Session, company: str, role: str, thread_id: str | None) -> Application | None:
+    if thread_id:
+        event = db.exec(select(EmailEvent).where(EmailEvent.thread_id == thread_id)).first()
+        if event and event.application_id:
+            return db.get(Application, event.application_id)
+    company_key = normalize_key(company)
+    role_key = normalize_key(role)
+    for app in db.exec(select(Application)).all():
+        if normalize_key(app.company) == company_key and normalize_key(app.role) == role_key:
+            return app
+    return None
+
+
+def apply_ghosting(db: Session, days: int | None = None) -> int:
+    cutoff = now_utc() - timedelta(days=days or settings().ghost_after_days)
+    changed = 0
+    apps = db.exec(select(Application).where(Application.status.in_([Status.applied, Status.pending]))).all()
+    for app in apps:
+        last = app.last_email_date
+        if last and last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        if last and last < cutoff:
+            app.status = Status.ghosted
+            app.updated_at = now_utc()
+            changed += 1
+    return changed
+
+
+def sync_messages(db: Session, messages: list[ProviderMessage], provider: str, dry_run: bool = True) -> list[str]:
+    lines = []
+    for msg in messages:
+        if db.exec(select(EmailEvent).where(EmailEvent.message_id == msg.id)).first():
+            continue
+        result = classify_email(msg.subject, msg.sender, msg.snippet)
+        company = company_from_sender(msg.sender)
+        role = role_from_text(msg.subject, msg.snippet)
+        received_at = parse_dt(msg.received_at) or now_utc()
+        app = find_application(db, company, role, msg.thread_id)
+        if not app:
+            app = Application(
+                company=company,
+                role=role,
+                source=provider,
+                status=result.status,
+                application_date=received_at if result.status == Status.applied else None,
+                last_update_date=received_at,
+                last_email_date=received_at,
+                confidence=result.confidence,
+            )
+            db.add(app)
+            db.flush()
+        else:
+            if TERMINAL_RANK[result.status] >= TERMINAL_RANK[app.status]:
+                app.status = result.status
+                app.confidence = max(app.confidence, result.confidence)
+            app.last_update_date = received_at
+            app.last_email_date = max(app.last_email_date or received_at, received_at)
+            app.updated_at = now_utc()
+
+        event = EmailEvent(
+            application_id=app.id,
+            provider=provider,
+            account_email=msg.account_email,
+            message_id=msg.id,
+            thread_id=msg.thread_id,
+            sender=msg.sender,
+            subject=msg.subject,
+            received_at=received_at,
+            event_type=result.event_type,
+            status_inferred=result.status,
+            confidence=result.confidence,
+            reason=result.reason,
+            snippet=(msg.snippet or "")[:500],
+        )
+        db.add(event)
+        lines.append(f"{company} | {role} | {result.status.value} | {result.reason}")
+    apply_ghosting(db)
+    if dry_run:
+        db.rollback()
+    else:
+        db.commit()
+    return lines

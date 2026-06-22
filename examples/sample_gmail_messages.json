@@ -1,0 +1,56 @@
+[
+  {
+    "id": "msg-applied-1",
+    "thread_id": "thread-acme",
+    "sender": "Acme Careers <jobs@acme.example>",
+    "subject": "Application received: Backend Engineer position",
+    "snippet": "Thank you for applying. We received your application for Backend Engineer.",
+    "received_at": "2026-06-01T10:00:00+00:00",
+    "account_email": "dev@example.com"
+  },
+  {
+    "id": "msg-rejected-1",
+    "thread_id": "thread-beta",
+    "sender": "Beta Talent <talent@beta.example>",
+    "subject": "Update on your application for Platform Engineer",
+    "snippet": "Unfortunately, we decided to proceed with other candidates.",
+    "received_at": "2026-06-03T11:00:00+00:00",
+    "account_email": "dev@example.com"
+  },
+  {
+    "id": "msg-interview-1",
+    "thread_id": "thread-cobalt",
+    "sender": "Cobalt Recruiting <recruiting@cobalt.example>",
+    "subject": "Interview for Python Developer position",
+    "snippet": "We would like to schedule a call and meet with the team.",
+    "received_at": "2026-06-05T12:00:00+00:00",
+    "account_email": "dev@example.com"
+  },
+  {
+    "id": "msg-assessment-1",
+    "thread_id": "thread-delta",
+    "sender": "Delta Hiring <hiring@delta.example>",
+    "subject": "Technical assessment for Data Engineer position",
+    "snippet": "Please complete this coding challenge and technical test.",
+    "received_at": "2026-06-07T13:00:00+00:00",
+    "account_email": "dev@example.com"
+  },
+  {
+    "id": "msg-offer-1",
+    "thread_id": "thread-ember",
+    "sender": "Ember People <people@ember.example>",
+    "subject": "Offer for Staff Engineer position",
+    "snippet": "Congratulations, we are pleased to offer you the role.",
+    "received_at": "2026-06-09T14:00:00+00:00",
+    "account_email": "dev@example.com"
+  },
+  {
+    "id": "msg-recruiter-1",
+    "thread_id": "thread-fox",
+    "sender": "Fox Talent Acquisition <ta@fox.example>",
+    "subject": "Recruiter message about SRE position",
+    "snippet": "A recruiter from talent acquisition wanted to follow up.",
+    "received_at": "2026-06-11T15:00:00+00:00",
+    "account_email": "dev@example.com"
+  }
+]
