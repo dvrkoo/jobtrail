@@ -26,7 +26,11 @@ tokens/
 
 # JobTrail generated exports
 exports/
+backups/
 *.csv
+*.xlsx
+*.tex
+jobtrail-backup-*.json
 *.md.tmp
 
 # OS/editor

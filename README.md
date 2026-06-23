@@ -63,6 +63,16 @@ uv run jobtrail list --status rejected
 uv run jobtrail export --format markdown
 ```
 
+## Daily Workflow
+
+```bash
+jobtrail
+jobtrail sync
+jobtrail followups
+jobtrail applications edit <id>
+jobtrail export --format xlsx
+```
+
 ## First Run
 
 ```bash
@@ -165,6 +175,33 @@ Default thresholds:
 - interview: 5 days
 
 Use `--all`, `--status`, `--days`, and `--format markdown` for morning reviews or notes.
+
+Example:
+
+```bash
+uv run jobtrail followups --days 21 --format markdown
+```
+
+## Application Edits
+
+Fix extraction mistakes without touching SQLite directly:
+
+```bash
+uv run jobtrail applications edit 1 --company Daon --role "Data Scientist Face Biometrics" --status interview
+uv run jobtrail applications archive 1
+uv run jobtrail applications unarchive 1
+```
+
+Archived applications are hidden from followups by default.
+
+## Backups
+
+```bash
+uv run jobtrail backup export
+uv run jobtrail backup import ~/.local/share/jobtrail/backups/jobtrail-backup-2026-06-23.json
+```
+
+Backups include applications, email events, provider account settings, and non-secret config. OAuth tokens, credentials, and full email bodies are not exported.
 
 ## v0.3 Roadmap
 

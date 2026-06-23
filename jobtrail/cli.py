@@ -298,7 +298,7 @@ def print_sync_summary(summary: SyncSummary) -> None:
     console.print(table)
 
 
-@app.command()
+@app.command(help="Sync enabled provider accounts or import sample Gmail messages.")
 def sync(
     provider: str | None = None,
     account: Annotated[str | None, typer.Option()] = None,
@@ -329,7 +329,7 @@ def sync(
             print_sync_summary(summary)
 
 
-@app.command()
+@app.command(help="Show stale active applications that may need attention.")
 def followups(
     all: Annotated[bool, typer.Option("--all")] = False,
     status: Status | None = None,
@@ -374,7 +374,7 @@ def show(application_id: int) -> None:
         console.print(f"  {event.reason} ({event.confidence})")
 
 
-@applications_app.command("edit")
+@applications_app.command("edit", help="Edit a tracked job application interactively or with flags.")
 def application_edit(
     application_id: int,
     company: str | None = None,
@@ -421,7 +421,7 @@ def application_edit(
     console.print(f"Updated {updated.id}: {updated.company} — {updated.role}" if updated else "Application not found")
 
 
-@applications_app.command("archive")
+@applications_app.command("archive", help="Hide an application from daily followups.")
 def application_archive(application_id: int) -> None:
     init_db()
     with session() as db:
@@ -429,7 +429,7 @@ def application_archive(application_id: int) -> None:
     console.print("Archived" if ok else "Application not found")
 
 
-@applications_app.command("unarchive")
+@applications_app.command("unarchive", help="Return an archived application to daily workflow views.")
 def application_unarchive(application_id: int) -> None:
     init_db()
     with session() as db:
@@ -445,7 +445,7 @@ def stats() -> None:
         console.print(f"{key}: {value}")
 
 
-@app.command()
+@app.command(help="Export applications as CSV, Markdown, Excel, LaTeX, or all formats.")
 def export(format: str = "csv", status: Status | None = None) -> None:
     cfg = init_config()
     with session() as db:
@@ -598,7 +598,7 @@ def provider_enable(provider_account_id: int) -> None:
     console.print("Enabled" if ok else "Provider account not found")
 
 
-@backup_app.command("export")
+@backup_app.command("export", help="Write a JSON backup without OAuth tokens or credentials.")
 def backup_export() -> None:
     cfg = init_config()
     init_db()
@@ -608,7 +608,7 @@ def backup_export() -> None:
     console.print(f"Backup written: {path}")
 
 
-@backup_app.command("import")
+@backup_app.command("import", help="Merge a JobTrail JSON backup into the local database.")
 def backup_import(path: Path) -> None:
     init_config()
     init_db()
