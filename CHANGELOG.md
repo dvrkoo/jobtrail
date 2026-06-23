@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add local Streamlit web UI launcher.
+- Add demo mode for browser-based sample data exploration.
+- Add overview, providers, applications, followups, exports, and settings UI pages.
+
 ## v0.3.0
 
 - Added `jobtrail followups` for stale active applications.

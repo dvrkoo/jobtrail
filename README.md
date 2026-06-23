@@ -51,6 +51,27 @@ Override paths with `JOBTRAIL_CONFIG_DIR` and `JOBTRAIL_DATA_DIR`.
 uv sync
 ```
 
+## Local Web UI
+
+Run a local browser UI with demo data:
+
+```bash
+uv sync
+uv run jobtrail ui --demo
+```
+
+Run it against your local JobTrail data:
+
+```bash
+uv run jobtrail ui
+```
+
+The UI is a local Streamlit app. It can show overview metrics, providers, applications, followups, exports, and settings. Demo mode uses temporary config/data paths and does not touch your real JobTrail database or tokens.
+
+If Gmail credentials are missing, the UI shows the next CLI setup step instead of pretending sync worked. Outlook remains a planned/stub provider.
+
+Screenshot placeholder: add a terminal/browser screenshot after the first v0.4 smoke recording.
+
 ## Demo Flow
 
 ```bash
