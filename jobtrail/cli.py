@@ -33,6 +33,7 @@ from jobtrail.services.providers import (
 )
 from jobtrail.services.stats import stats as calc_stats
 from jobtrail.services.sync import SyncSummary, sync_messages_summary, sync_provider_account
+from jobtrail.services.ui import build_streamlit_launch, launch_ui, prepare_demo
 from jobtrail.utils.validation import positive_int, valid_email
 from jobtrail.utils.windows import date_window, parse_relative_window
 
@@ -327,6 +328,32 @@ def sync(
             elif summary.error:
                 console.print(f"Sync failed. Check credentials, then retry: {summary.error}")
             print_sync_summary(summary)
+
+
+@app.command(help="Launch the local Streamlit web UI.")
+def ui(
+    demo: bool = False,
+    no_browser: bool = False,
+    port: int = 8501,
+    smoke_test: bool = False,
+) -> None:
+    config_dir = Path("/tmp/jobtrail-ui-demo-config") if demo else None
+    data_dir = Path("/tmp/jobtrail-ui-demo-data") if demo else None
+    if demo:
+        prepare_demo(config_dir, data_dir, Path("examples/sample_gmail_messages.json"))
+    if smoke_test:
+        import jobtrail.ui.app  # noqa: F401
+
+        console.print("UI smoke test passed")
+        return
+    launch = build_streamlit_launch(
+        port=port,
+        no_browser=no_browser,
+        demo=demo,
+        config_dir=config_dir,
+        data_dir=data_dir,
+    )
+    raise typer.Exit(launch_ui(launch))
 
 
 @app.command(help="Show stale active applications that may need attention.")
