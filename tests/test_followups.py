@@ -26,3 +26,8 @@ def test_days_since_update_never_negative() -> None:
     now = datetime.now(UTC)
     app = Application(company="A", role="R", last_update_date=now + timedelta(days=1))
     assert days_since_update(app, now=now) == 0
+
+
+def test_days_since_update_handles_naive_db_datetime() -> None:
+    app = Application(company="A", role="R", status=Status.pending, last_update_date=datetime(2026, 6, 1, 12, 0))
+    assert days_since_update(app, now=datetime(2026, 6, 3, 12, 0, tzinfo=UTC)) == 2

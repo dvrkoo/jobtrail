@@ -4,7 +4,7 @@ from datetime import date
 
 from sqlmodel import Session, select
 
-from jobtrail.models import ProviderAccount, SyncWindowType, now_utc
+from jobtrail.models import ProviderAccount, SyncWindowType, SyncWindowUnit, now_utc
 from jobtrail.utils.windows import parse_relative_window
 
 
@@ -43,6 +43,51 @@ def set_absolute_window(
     account.relative_sync_value = None
     account.relative_sync_unit = None
     account.updated_at = now_utc()
+    return account
+
+
+def window_label(account: ProviderAccount) -> str:
+    if account.sync_window_type == SyncWindowType.all:
+        return "all"
+    if account.sync_window_type == SyncWindowType.absolute:
+        return f"{account.sync_start_date or ''}..{account.sync_end_date or ''}"
+    unit = account.relative_sync_unit.value if account.relative_sync_unit else SyncWindowUnit.days.value
+    return f"last {account.relative_sync_value or 30} {unit}"
+
+
+def set_provider_window(
+    db: Session,
+    provider_account_id: int,
+    *,
+    all_available: bool = False,
+    relative: int | None = None,
+    unit: str | SyncWindowUnit | None = None,
+    start: date | None = None,
+    end: date | None = None,
+) -> ProviderAccount | None:
+    account = db.get(ProviderAccount, provider_account_id)
+    if not account:
+        return None
+    if all_available:
+        account.sync_window_type = SyncWindowType.all
+        account.sync_start_date = None
+        account.sync_end_date = None
+        account.relative_sync_value = None
+        account.relative_sync_unit = None
+    elif start:
+        set_absolute_window(account, start, end)
+    elif relative is not None:
+        account.sync_window_type = SyncWindowType.relative
+        account.sync_start_date = None
+        account.sync_end_date = None
+        account.relative_sync_value = relative
+        account.relative_sync_unit = SyncWindowUnit(unit or SyncWindowUnit.days)
+        account.updated_at = now_utc()
+    else:
+        raise ValueError("choose --all, --relative/--days/--months, or --start")
+    db.add(account)
+    db.commit()
+    db.refresh(account)
     return account
 
 

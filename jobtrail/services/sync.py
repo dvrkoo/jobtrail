@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+import re
 
 from sqlmodel import Session, select
 
@@ -9,9 +10,11 @@ from jobtrail.classifiers.rules import classify_email
 from jobtrail.config import load_config
 from jobtrail.models import Application, EmailEvent, ProviderAccount, Status, now_utc
 from jobtrail.providers.gmail import GmailProvider
+from jobtrail.providers.gmail_imap import GmailImapProvider
 from jobtrail.schemas import ProviderMessage
-from jobtrail.utils.windows import gmail_after_before
+from jobtrail.utils.dates import ensure_aware_utc
 from jobtrail.utils.text import company_from_sender, normalize_key, role_from_text
+from jobtrail.utils.windows import date_window, gmail_after_before
 
 
 TERMINAL_RANK = {
@@ -41,10 +44,38 @@ class SyncSummary:
     lines: list[str] = field(default_factory=list)
 
 
+def raw_window_fields(account: ProviderAccount) -> dict[str, object]:
+    return {
+        "sync_window_type": account.sync_window_type.value,
+        "sync_start_date": account.sync_start_date,
+        "sync_end_date": account.sync_end_date,
+        "relative_sync_value": account.relative_sync_value,
+        "relative_sync_unit": account.relative_sync_unit.value if account.relative_sync_unit else None,
+    }
+
+
+def resolved_window_debug(account: ProviderAccount, window_query: str) -> dict[str, object]:
+    start, end = date_window(account)
+    if window_query != "all":
+        after = re.search(r"after:(\d{4}/\d{2}/\d{2})", window_query)
+        before = re.search(r"before:(\d{4}/\d{2}/\d{2})", window_query)
+        if after or before:
+            start = datetime.strptime(after.group(1), "%Y/%m/%d").date() if after else None
+            end = datetime.strptime(before.group(1), "%Y/%m/%d").date() if before else None
+    return {
+        "provider_account_id": account.id,
+        "provider": account.provider,
+        "account_email": account.account_email,
+        "raw_window_fields": raw_window_fields(account),
+        "resolved_date_range": "all" if not start and not end else f"{start or ''}..{end or ''}",
+        "imap_query": window_query,
+    }
+
+
 def parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return ensure_aware_utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
 
 
 def find_application(db: Session, company: str, role: str, thread_id: str | None) -> Application | None:
@@ -66,8 +97,8 @@ def apply_ghosting(db: Session, days: int | None = None) -> int:
     apps = db.exec(select(Application).where(Application.status.in_([Status.applied, Status.pending]))).all()
     for app in apps:
         last = app.last_email_date
-        if last and last.tzinfo is None:
-            last = last.replace(tzinfo=UTC)
+        if last:
+            last = ensure_aware_utc(last)
         if last and last < cutoff:
             app.status = Status.ghosted
             app.updated_at = now_utc()
@@ -118,7 +149,7 @@ def sync_messages_summary(
                 app.status = result.status
                 app.confidence = max(app.confidence, result.confidence)
             app.last_update_date = received_at
-            app.last_email_date = max(app.last_email_date or received_at, received_at)
+            app.last_email_date = max(ensure_aware_utc(app.last_email_date or received_at), received_at)
             app.updated_at = now_utc()
 
         event = EmailEvent(
@@ -151,12 +182,29 @@ def sync_messages(db: Session, messages: list[ProviderMessage], provider: str, d
     return sync_messages_summary(db, messages, provider=provider, dry_run=dry_run).lines
 
 
-def sync_provider_account(db: Session, account: ProviderAccount, dry_run: bool = False) -> SyncSummary:
+def friendly_sync_error(exc: Exception) -> str:
+    text = str(exc)
+    if "offset-naive" in text and "offset-aware" in text:
+        return "JobTrail hit mixed timezone data while syncing. Dates are normalized automatically; retry sync or report the email date format."
+    return text
+
+
+def sync_provider_account(
+    db: Session,
+    account: ProviderAccount,
+    dry_run: bool = False,
+    max_messages: int | None = None,
+    window_query: str | None = None,
+) -> SyncSummary:
     started = now_utc()
-    window = gmail_after_before(account) or "all"
+    window = window_query or gmail_after_before(account) or "all"
     try:
         if account.provider == "gmail":
             messages = GmailProvider().search_messages(window)
+            if max_messages is not None:
+                messages = messages[:max_messages]
+        elif account.provider == "gmail_imap":
+            messages = GmailImapProvider(account.account_email).search_messages(window, max_messages=max_messages)
         elif account.provider == "outlook":
             raise NotImplementedError("Outlook sync is configured but not implemented yet")
         else:
@@ -180,7 +228,8 @@ def sync_provider_account(db: Session, account: ProviderAccount, dry_run: bool =
     except Exception as exc:
         account.last_sync_at = started
         account.last_sync_status = "error"
-        account.last_sync_error = str(exc)
+        error = friendly_sync_error(exc)
+        account.last_sync_error = error
         db.add(account)
         db.commit()
         return SyncSummary(
@@ -188,5 +237,5 @@ def sync_provider_account(db: Session, account: ProviderAccount, dry_run: bool =
             account_email=account.account_email,
             search_window=window,
             status="error",
-            error=str(exc),
+            error=error,
         )

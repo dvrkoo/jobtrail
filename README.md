@@ -4,7 +4,7 @@ JobTrail is a local-first CLI that reconstructs your job-search timeline from yo
 
 Most job trackers require manual entry. JobTrail reads job-related email metadata, classifies application events, stores a local SQLite timeline, and helps you see what is pending, rejected, interviewing, offered, or ghosted.
 
-Status: early MVP. Gmail works. Outlook is a stub for now. No web dashboard, no LLM classifier, and no full email body storage by default.
+Status: early MVP. Gmail works. Outlook is a stub for now. No LLM classifier, and no full email body storage by default.
 
 ## Privacy First
 
@@ -33,7 +33,8 @@ Override paths with `JOBTRAIL_CONFIG_DIR` and `JOBTRAIL_DATA_DIR`.
 - Settings menu
 - SQLite local database
 - Rule-based explainable classification
-- Gmail provider and OAuth flow
+- Gmail IMAP App Password provider
+- Gmail API OAuth provider
 - Multiple provider accounts
 - Per-account sync windows
 - Sample JSON sync for demos and tests
@@ -68,7 +69,7 @@ uv run jobtrail ui
 
 The UI is a local Streamlit app. It can show overview metrics, providers, applications, followups, exports, and settings. Demo mode uses temporary config/data paths and does not touch your real JobTrail database or tokens.
 
-If Gmail credentials are missing, the UI shows the next CLI setup step instead of pretending sync worked. Outlook remains a planned/stub provider.
+Gmail IMAP with a Google App Password is the easiest local setup. Gmail API OAuth remains available for labels. Outlook remains a planned/stub provider.
 
 Screenshot placeholder: add a terminal/browser screenshot after the first v0.4 smoke recording.
 
@@ -109,6 +110,23 @@ uv run jobtrail onboard
 ```
 
 ## Gmail Setup
+
+Easy Gmail setup uses IMAP with a Google App Password:
+
+1. Enable 2-Step Verification on your Google account.
+2. Create a Google App Password for Mail.
+3. Run:
+
+```bash
+uv run jobtrail providers add
+uv run jobtrail sync --provider gmail_imap --dry-run
+```
+
+JobTrail stores the App Password in your system keyring when available. If keyring storage is unavailable, set the env var shown by `providers add`, for example `JOBTRAIL_GMAIL_IMAP_PASSWORD_YOU_EXAMPLE_COM`.
+
+Labels are only supported by the Gmail API provider for now.
+
+Advanced Gmail setup with API OAuth:
 
 Create a Google OAuth desktop app, download the OAuth client as `credentials.json` into the project directory, then run:
 
@@ -151,6 +169,7 @@ jobtrail settings
 jobtrail status
 jobtrail sync
 jobtrail sync --provider gmail
+jobtrail sync --provider gmail_imap
 jobtrail sync --account you@example.com
 jobtrail sync --from-sample-json examples/sample_gmail_messages.json
 jobtrail list --status pending

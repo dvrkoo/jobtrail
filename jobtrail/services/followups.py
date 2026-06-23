@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session, select
 
 from jobtrail.models import Application, Status
+from jobtrail.utils.dates import ensure_aware_utc
 
 
 DEFAULT_THRESHOLDS = {
@@ -26,10 +27,9 @@ class FollowupCandidate:
 
 
 def days_since_update(app: Application, now: datetime | None = None) -> int:
-    now = now or datetime.now(UTC)
+    now = ensure_aware_utc(now or datetime.now(UTC))
     last = app.last_update_date or app.last_email_date or app.application_date or app.created_at
-    if last.tzinfo is None:
-        last = last.replace(tzinfo=UTC)
+    last = ensure_aware_utc(last)
     return max((now - last).days, 0)
 
 

@@ -14,12 +14,13 @@ def test_backup_excludes_auth_state_and_imports(tmp_path, monkeypatch) -> None:
     backup = tmp_path / "backup.json"
     with Session(engine) as db:
         db.add(Application(company="A", role="R"))
-        db.add(ProviderAccount(provider="gmail", account_email="a@example.com", auth_state_path="secret-token-path"))
+        db.add(ProviderAccount(provider="gmail_imap", account_email="a@example.com", auth_state_path="secret-token-path"))
         db.commit()
         export_backup(db, backup)
     data = json.loads(backup.read_text())
     assert "auth_state_path" not in data["provider_accounts"][0]
     assert "secret-token-path" not in backup.read_text()
+    assert "password" not in backup.read_text().lower()
 
     engine2 = create_engine("sqlite://")
     SQLModel.metadata.create_all(engine2)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +15,7 @@ from jobtrail.config import AppConfig, config_exists, init_config, load_config, 
 from jobtrail.db import db_initialized, init_db, session
 from jobtrail.models import Application, EmailEvent, ProviderAccount, Status
 from jobtrail.providers.gmail import GmailProvider, load_sample
+from jobtrail.providers.gmail_imap import password_env_var, store_password
 from jobtrail.services.export import export_csv, export_dir, export_latex, export_markdown, export_xlsx, timestamped_name
 from jobtrail.services.applications import set_archived, update_application
 from jobtrail.services.backup import export_backup, import_backup
@@ -29,13 +30,14 @@ from jobtrail.services.providers import (
     set_absolute_window,
     set_enabled,
     set_labels_enabled,
-    set_relative_window,
+    set_provider_window,
+    window_label,
 )
 from jobtrail.services.stats import stats as calc_stats
-from jobtrail.services.sync import SyncSummary, sync_messages_summary, sync_provider_account
+from jobtrail.services.sync import SyncSummary, resolved_window_debug, sync_messages_summary, sync_provider_account
 from jobtrail.services.ui import build_streamlit_launch, launch_ui, prepare_demo
 from jobtrail.utils.validation import positive_int, valid_email
-from jobtrail.utils.windows import date_window, parse_relative_window
+from jobtrail.utils.windows import date_window, gmail_after_before, parse_relative_window
 
 app = typer.Typer(invoke_without_command=True)
 providers_app = typer.Typer(help="Manage provider accounts")
@@ -181,17 +183,21 @@ def settings_menu() -> None:
             if not account:
                 console.print("Provider not found")
             elif window_kind == "absolute":
+                old = window_label(account)
                 start = ask_date("Start date YYYY-MM-DD")
                 end_text = ask_optional_date("End date YYYY-MM-DD, empty for today")
-                set_absolute_window(account, start, date.fromisoformat(end_text) if end_text else None)
-                db.add(account)
-                db.commit()
-                console.print("Saved")
+                updated = set_provider_window(db, provider_id, start=start, end=date.fromisoformat(end_text) if end_text else None)
+                console.print(f"Saved: {old} -> {window_label(updated)}")
             elif window_kind == "all":
-                console.print("Saved" if set_relative_window(db, provider_id, "all available") else "Provider not found")
+                old = window_label(account)
+                updated = set_provider_window(db, provider_id, all_available=True)
+                console.print(f"Saved: {old} -> {window_label(updated)}")
             else:
                 window = Prompt.ask("Relative window", choices=["last 30 days", "last 90 days", "last 6 months", "last 12 months", "last 24 months"], default="last 12 months")
-                console.print("Saved" if set_relative_window(db, provider_id, window) else "Provider not found")
+                old = window_label(account)
+                value, unit = window.removeprefix("last ").split()
+                updated = set_provider_window(db, provider_id, relative=int(value), unit=unit)
+                console.print(f"Saved: {old} -> {window_label(updated)}")
     elif choice == "labels":
         provider_id = IntPrompt.ask("Provider account ID")
         enabled = Confirm.ask("Enable labels/categories?", default=True)
@@ -299,17 +305,46 @@ def print_sync_summary(summary: SyncSummary) -> None:
     console.print(table)
 
 
+def override_window_query(days: int | None = None, months: int | None = None, since: str | None = None) -> str | None:
+    choices = [days is not None, months is not None, since is not None]
+    if sum(choices) > 1:
+        raise typer.BadParameter("Use only one of --since, --days, or --months.")
+    if since:
+        start = date.fromisoformat(since)
+        return f"after:{start:%Y/%m/%d} before:{date.today():%Y/%m/%d}"
+    if days is not None:
+        start = date.today() - timedelta(days=days)
+        return f"after:{start:%Y/%m/%d} before:{date.today():%Y/%m/%d}"
+    if months is not None:
+        start = date.today() - timedelta(days=months * 30)
+        return f"after:{start:%Y/%m/%d} before:{date.today():%Y/%m/%d}"
+    return None
+
+
+def print_verbose_sync(account: ProviderAccount, window: str) -> None:
+    for key, value in resolved_window_debug(account, window).items():
+        console.print(f"{key}: {value}")
+
+
 @app.command(help="Sync enabled provider accounts or import sample Gmail messages.")
 def sync(
     provider: str | None = None,
     account: Annotated[str | None, typer.Option()] = None,
     dry_run: bool = False,
     from_sample_json: Annotated[Path | None, typer.Option()] = None,
+    max_messages: Annotated[int | None, typer.Option()] = None,
+    since: Annotated[str | None, typer.Option()] = None,
+    days: Annotated[int | None, typer.Option()] = None,
+    months: Annotated[int | None, typer.Option()] = None,
+    save_window: bool = False,
+    verbose: bool = False,
 ) -> None:
     init_config()
     init_db()
     if from_sample_json:
         messages = load_sample(from_sample_json)
+        if max_messages is not None:
+            messages = messages[:max_messages]
         with session() as db:
             summary = sync_messages_summary(db, messages, provider=provider or "gmail", dry_run=dry_run)
         for line in summary.lines:
@@ -322,12 +357,26 @@ def sync(
             console.print("No enabled provider accounts match. Run `jobtrail providers add`.")
             return
         for provider_account in accounts:
-            summary = sync_provider_account(db, provider_account, dry_run=dry_run)
+            runtime_window = override_window_query(days=days, months=months, since=since)
+            if save_window and runtime_window:
+                if days is not None:
+                    provider_account = set_provider_window(db, provider_account.id, relative=days, unit="days")
+                elif months is not None:
+                    provider_account = set_provider_window(db, provider_account.id, relative=months, unit="months")
+                elif since:
+                    provider_account = set_provider_window(db, provider_account.id, start=date.fromisoformat(since), end=date.today())
+            window = runtime_window or gmail_after_before(provider_account) or "all"
+            console.print(f"Sync window: {window}")
+            if verbose:
+                print_verbose_sync(provider_account, window)
+            summary = sync_provider_account(db, provider_account, dry_run=dry_run, max_messages=max_messages, window_query=window)
             if summary.error and provider_account.provider == "outlook":
                 console.print("Outlook is configured but sync is planned. Use Gmail or sample JSON for now.")
             elif summary.error:
                 console.print(f"Sync failed. Check credentials, then retry: {summary.error}")
             print_sync_summary(summary)
+        if verbose:
+            console.print("Sync finished; exiting.")
 
 
 @app.command(help="Launch the local Streamlit web UI.")
@@ -504,7 +553,7 @@ def export(format: str = "csv", status: Status | None = None) -> None:
 @app.command("label-emails")
 def label_emails(provider: str = "gmail", dry_run: bool = True, apply: bool = False) -> None:
     if provider != "gmail":
-        raise typer.BadParameter("only gmail is implemented")
+        raise typer.BadParameter("Labels are only supported by the Gmail API provider for now.")
     with session() as db:
         labels = thread_labels(db)
     actions = GmailProvider().label_threads(labels, dry_run=not apply if apply else dry_run)
@@ -544,14 +593,56 @@ def provider_add() -> None:
     add_provider_interactive()
 
 
+@providers_app.command("set-window")
+def provider_set_window(
+    provider_account_id: int,
+    relative: Annotated[int | None, typer.Option()] = None,
+    unit: Annotated[str, typer.Option()] = "days",
+    days: Annotated[int | None, typer.Option()] = None,
+    months: Annotated[int | None, typer.Option()] = None,
+    all_available: Annotated[bool, typer.Option("--all")] = False,
+    start: Annotated[str | None, typer.Option()] = None,
+    end: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    init_db()
+    choices = [relative is not None, days is not None, months is not None, all_available, start is not None]
+    if sum(choices) != 1:
+        raise typer.BadParameter("Choose exactly one window: --relative, --days, --months, --all, or --start.")
+    with session() as db:
+        account = db.get(ProviderAccount, provider_account_id)
+        if not account:
+            console.print("Provider account not found")
+            return
+        old = window_label(account)
+        if days is not None:
+            account = set_provider_window(db, provider_account_id, relative=days, unit="days")
+        elif months is not None:
+            account = set_provider_window(db, provider_account_id, relative=months, unit="months")
+        elif relative is not None:
+            account = set_provider_window(db, provider_account_id, relative=relative, unit=unit)
+        elif all_available:
+            account = set_provider_window(db, provider_account_id, all_available=True)
+        else:
+            account = set_provider_window(
+                db,
+                provider_account_id,
+                start=date.fromisoformat(start),
+                end=date.fromisoformat(end) if end else None,
+            )
+        console.print(f"Old window: {old}")
+        console.print(f"New window: {window_label(account)}")
+
+
 def add_provider_interactive() -> ProviderAccount:
-    provider = Prompt.ask("Provider", choices=["gmail", "outlook"], default="gmail")
+    provider = Prompt.ask("Provider", choices=["gmail", "gmail_imap", "outlook"], default="gmail_imap")
     while True:
         email = Prompt.ask("Account email")
         if valid_email(email):
             break
         console.print("Enter an email like name@example.com.")
-    labels = Confirm.ask("Enable labels/categories?", default=False)
+    labels = False if provider == "gmail_imap" else Confirm.ask("Enable labels/categories?", default=False)
+    if provider == "gmail_imap":
+        console.print("Labels are only supported by the Gmail API provider for now.")
     window_kind = Prompt.ask("Sync window type", choices=["relative", "absolute", "all"], default="relative")
     with session() as db:
         if window_kind == "absolute":
@@ -572,6 +663,14 @@ def add_provider_interactive() -> ProviderAccount:
             db.commit()
             console.print("Gmail account saved. OAuth starts on first sync if needed.")
             console.print("If you do not have credentials yet, add `credentials.json` in this directory.")
+        elif provider == "gmail_imap":
+            password = Prompt.ask("Google App Password (blank to use env var)", default="", password=True)
+            if password and store_password(email, password):
+                console.print("Gmail IMAP account saved. App Password stored in system keyring.")
+            elif password:
+                console.print(f"Keyring unavailable. Set {password_env_var(email)} before syncing.")
+            else:
+                console.print(f"Gmail IMAP account saved. Set {password_env_var(email)} before syncing.")
         else:
             console.print("Outlook account saved as a stub. Microsoft Graph auth is not implemented yet.")
         return account
